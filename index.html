@@ -40,6 +40,7 @@
     .actions { display:grid; grid-template-columns:76px 1fr; gap:16px; padding-top:24px; }
     .backup-link { display:block; align-self:center; margin:12px auto 0; padding:8px 12px; border:0; background:transparent; color:var(--green); font-size:14px; font-weight:600; text-decoration:underline; text-underline-offset:3px; cursor:pointer; }
     .mic { width:76px; height:76px; border:1.5px solid var(--green); border-radius:22px; color:var(--green); background:transparent; display:grid; place-items:center; }
+    .mic.listening { background:#e8f1ed; box-shadow:0 0 0 4px #30796620; }
     .add { height:76px; border:0; border-radius:22px; color:white; background:var(--green); font-size:21px; font-weight:550; cursor:pointer; }
     .add:active { background:var(--green-dark); }
     .mic svg { width:27px; height:27px; }
@@ -53,6 +54,8 @@
     input:focus { border-color:var(--green); box-shadow:0 0 0 3px #30796620; }
     .save { width:100%; margin-top:22px; border:0; background:var(--green); color:white; padding:15px; border-radius:14px; font-weight:600; }
     .form-hint { margin:8px 0 0; color:var(--muted); font-size:13px; line-height:1.35; }
+    .voice-status { min-height:18px; margin:7px 0 0; color:var(--green); font-size:13px; line-height:1.35; }
+    .voice-status[hidden] { display:none; }
     .backup-copy { color:var(--muted); line-height:1.45; margin:4px 0 18px; }
     .backup-action { width:100%; margin:7px 0; border:1px solid #b8d2c8; background:transparent; color:var(--green); padding:13px 14px; border-radius:14px; font-weight:600; }
     .toast { position:fixed; bottom:calc(env(safe-area-inset-bottom) + 118px); left:50%; transform:translate(-50%,12px); background:#232925; color:white; padding:12px 18px; border-radius:20px; opacity:0; pointer-events:none; transition:.2s; white-space:nowrap; }
@@ -87,6 +90,7 @@
       <div class="form-head"><h2 id="entryTitle">Ausgabe hinzufügen</h2><button class="close" type="button" id="close" aria-label="Schließen">×</button></div>
       <label for="name">Medikament</label><input id="name" required placeholder="Name des Medikaments" autocomplete="off">
       <p class="form-hint">Du kannst den Namen über das Mikrofon der iPhone-Tastatur diktieren.</p>
+      <p class="voice-status" id="voiceStatus" aria-live="polite" hidden></p>
       <label for="date">Datum</label><input id="date" type="date" required>
       <label for="amount">Betrag in Euro</label><input id="amount" type="number" required min="0.01" step="0.01" inputmode="decimal" placeholder="0,00">
       <button class="save" id="saveEntry" type="submit">Speichern</button>
@@ -137,6 +141,16 @@
         });
       }
     }
+    let activeRecognition=null, voiceTimeout=null;
+    function setMicState(listening){const mic=document.getElementById('voice');mic.classList.toggle('listening',listening);mic.setAttribute('aria-pressed',String(listening));}
+    function stopVoiceRecognition(abort=true){
+      const recognition=activeRecognition;
+      activeRecognition=null;
+      clearTimeout(voiceTimeout);voiceTimeout=null;
+      setMicState(false);
+      const status=document.getElementById('voiceStatus');status.hidden=true;status.textContent='';
+      if(recognition){try{abort?recognition.abort():recognition.stop();}catch{}}
+    }
     function persist(){ localStorage.setItem(fallback,JSON.stringify(entries)); render(); }
     const backupDialog=document.getElementById('backupDialog');
     const actionsDialog=document.getElementById('actionsDialog');
@@ -171,6 +185,7 @@
     function toastMessage(message){const toast=document.getElementById('toast');toast.textContent=message;toast.classList.add('show');setTimeout(()=>toast.classList.remove('show'),2600);}
     const dialog=document.getElementById('entryDialog');
     function openEntryForm(entry=null){
+      stopVoiceRecognition(true);
       editingId=entry?.id||null;
       document.getElementById('entryTitle').textContent=editingId?'Ausgabe bearbeiten':'Ausgabe hinzufügen';
       document.getElementById('saveEntry').textContent=editingId?'Änderungen speichern':'Speichern';
@@ -180,8 +195,9 @@
       dialog.showModal();setTimeout(()=>document.getElementById('name').focus(),80);
     }
     document.getElementById('add').addEventListener('click',openEntryForm);
-    document.getElementById('close').addEventListener('click',()=>{dialog.close();editingId=null;});
-    document.getElementById('entryForm').addEventListener('submit',event=>{event.preventDefault(); const name=document.getElementById('name').value.trim(), date=document.getElementById('date').value, amount=Number(document.getElementById('amount').value); if(editingId){entries=entries.map(e=>e.id===editingId?{...e,name,date,amount}:e);}else{entries.push({id:crypto.randomUUID(),name,date,amount});} persist(); shown=new Date(`${date}T12:00:00`); render(); dialog.close(); event.target.reset(); editingId=null;});
+    document.getElementById('close').addEventListener('click',()=>{stopVoiceRecognition(true);dialog.close();editingId=null;});
+    dialog.addEventListener('cancel',()=>{stopVoiceRecognition(true);editingId=null;});
+    document.getElementById('entryForm').addEventListener('submit',event=>{event.preventDefault();stopVoiceRecognition(true); const name=document.getElementById('name').value.trim(), date=document.getElementById('date').value, amount=Number(document.getElementById('amount').value); if(editingId){entries=entries.map(e=>e.id===editingId?{...e,name,date,amount}:e);}else{entries.push({id:crypto.randomUUID(),name,date,amount});} persist(); shown=new Date(`${date}T12:00:00`); render(); dialog.close(); event.target.reset(); editingId=null;});
     document.getElementById('prev').addEventListener('click',()=>{shown.setMonth(shown.getMonth()-1);render();});
     document.getElementById('next').addEventListener('click',()=>{shown.setMonth(shown.getMonth()+1);render();});
     document.getElementById('currentMonth').addEventListener('click',()=>{shown=new Date();shown.setDate(1);render();});
@@ -205,6 +221,7 @@
       if(cleaned)document.getElementById('name').value=cleaned;
     }
     function startVoiceEntry(){
+      if(activeRecognition){stopVoiceRecognition(true);showToast('Aufnahme beendet.');return;}
       openEntryForm();
       const SpeechRecognition=window.SpeechRecognition||window.webkitSpeechRecognition;
       if(!SpeechRecognition||!window.isSecureContext){
@@ -212,13 +229,23 @@
         return;
       }
       try{
-        const recognition=new SpeechRecognition();recognition.lang='de-DE';recognition.interimResults=false;recognition.maxAlternatives=1;
-        recognition.onresult=event=>{const transcript=event.results[0][0].transcript;parseSpokenEntry(transcript);showToast(`Erkannt: ${transcript}`);};
-        recognition.onerror=event=>{showToast(event.error==='not-allowed'?'Mikrofonzugriff in Safari erlauben oder Tastatur-Diktat verwenden.':'Spracheingabe nicht verfügbar. Nutze das Mikrofon auf der iPhone-Tastatur.');};
+        const recognition=new SpeechRecognition();activeRecognition=recognition;recognition.lang='de-DE';recognition.interimResults=true;recognition.continuous=false;recognition.maxAlternatives=1;
+        const status=document.getElementById('voiceStatus');status.hidden=false;status.textContent='Ich höre zu …';setMicState(true);
+        recognition.onresult=event=>{
+          let finalText='',interimText='';
+          for(let i=event.resultIndex;i<event.results.length;i++){const text=event.results[i][0].transcript;if(event.results[i].isFinal)finalText+=text;else interimText+=text;}
+          if(interimText)status.textContent=`Ich höre zu: ${interimText}`;
+          if(finalText){parseSpokenEntry(finalText.trim());showToast(`Erkannt: ${finalText.trim()}`);stopVoiceRecognition(false);}
+        };
+        recognition.onerror=event=>{const wasActive=activeRecognition===recognition;stopVoiceRecognition(true);if(wasActive&&event.error!=='aborted')showToast(event.error==='not-allowed'?'Mikrofonzugriff in Safari erlauben oder Tastatur-Diktat verwenden.':'Spracheingabe fehlgeschlagen. Du kannst die Angaben eintippen.');};
+        recognition.onend=()=>{if(activeRecognition===recognition)stopVoiceRecognition(true);};
+        voiceTimeout=setTimeout(()=>{if(activeRecognition===recognition){stopVoiceRecognition(true);showToast('Aufnahme beendet. Prüfe die erkannten Angaben.');}},20000);
         recognition.start();
-      }catch{showToast('Nutze zum Diktieren das Mikrofon auf der iPhone-Tastatur.');}
+      }catch{stopVoiceRecognition(true);showToast('Nutze zum Diktieren das Mikrofon auf der iPhone-Tastatur.');}
     }
     document.getElementById('voice').addEventListener('click',startVoiceEntry);
+    document.addEventListener('visibilitychange',()=>{if(document.hidden)stopVoiceRecognition(true);});
+    window.addEventListener('pagehide',()=>stopVoiceRecognition(true));
     render();
     if('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('./service-worker.js').catch(()=>{});
   </script>
