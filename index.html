@@ -18,7 +18,7 @@
     button,input { font:inherit; }
     button { color:inherit; }
     .phone { width:100%; max-width:520px; min-height:100svh; margin:auto; background:var(--paper); padding:calc(env(safe-area-inset-top) + 54px) 28px calc(env(safe-area-inset-bottom) + 24px); display:flex; flex-direction:column; }
-    h1 { font-size:36px; line-height:1.1; letter-spacing:-1.1px; margin:0 0 30px; font-weight:650; }
+    h1 { max-width:100%; font-size:clamp(26px,7.5vw,30px); line-height:1.12; letter-spacing:-0.7px; margin:0 0 30px; font-weight:650; overflow-wrap:anywhere; }
     .monthbar { display:grid; grid-template-columns:44px minmax(0,1fr) 44px; align-items:center; margin:0 -3px 35px; text-align:center; }
     .iconbtn { border:0; background:transparent; height:44px; width:44px; border-radius:50%; display:grid; place-items:center; cursor:pointer; }
     .iconbtn:active { background:#e9ece7; }
@@ -52,6 +52,7 @@
     input { width:100%; border:1px solid #d9dcd5; border-radius:12px; padding:13px 14px; background:white; outline:none; }
     input:focus { border-color:var(--green); box-shadow:0 0 0 3px #30796620; }
     .save { width:100%; margin-top:22px; border:0; background:var(--green); color:white; padding:15px; border-radius:14px; font-weight:600; }
+    .form-hint { margin:8px 0 0; color:var(--muted); font-size:13px; line-height:1.35; }
     .backup-copy { color:var(--muted); line-height:1.45; margin:4px 0 18px; }
     .backup-action { width:100%; margin:7px 0; border:1px solid #b8d2c8; background:transparent; color:var(--green); padding:13px 14px; border-radius:14px; font-weight:600; }
     .toast { position:fixed; bottom:calc(env(safe-area-inset-bottom) + 118px); left:50%; transform:translate(-50%,12px); background:#232925; color:white; padding:12px 18px; border-radius:20px; opacity:0; pointer-events:none; transition:.2s; white-space:nowrap; }
@@ -83,12 +84,18 @@
   </main>
   <dialog id="entryDialog">
     <form id="entryForm">
-      <div class="form-head"><h2>Ausgabe hinzufügen</h2><button class="close" type="button" id="close" aria-label="Schließen">×</button></div>
+      <div class="form-head"><h2 id="entryTitle">Ausgabe hinzufügen</h2><button class="close" type="button" id="close" aria-label="Schließen">×</button></div>
       <label for="name">Medikament</label><input id="name" required placeholder="Name des Medikaments" autocomplete="off">
+      <p class="form-hint">Du kannst den Namen über das Mikrofon der iPhone-Tastatur diktieren.</p>
       <label for="date">Datum</label><input id="date" type="date" required>
       <label for="amount">Betrag in Euro</label><input id="amount" type="number" required min="0.01" step="0.01" inputmode="decimal" placeholder="0,00">
-      <button class="save" type="submit">Speichern</button>
+      <button class="save" id="saveEntry" type="submit">Speichern</button>
     </form>
+  </dialog>
+  <dialog id="actionsDialog">
+    <div class="form-head"><h2 id="actionsTitle">Eintrag</h2><button class="close" type="button" id="actionsClose" aria-label="Schließen">×</button></div>
+    <button class="backup-action" type="button" id="editEntry">Bearbeiten</button>
+    <button class="backup-action" type="button" id="deleteEntry" style="color:#a33;border-color:#e4c7c2">Löschen</button>
   </dialog>
   <dialog id="backupDialog">
     <div class="form-head"><h2>Daten sichern</h2><button class="close" type="button" id="backupClose" aria-label="Schließen">×</button></div>
@@ -117,24 +124,27 @@
       document.getElementById('yearTotal').textContent = euros(entries.filter(e=>e.date.startsWith(yearKey)).reduce((s,e)=>s+Number(e.amount),0));
       const list = document.getElementById('list'); list.innerHTML = '';
       if (!filtered.length) {
-        for (let i=0;i<7;i++) {
-          const row=document.createElement('div'); row.className='item';
-          row.innerHTML=`<div><div class="item-name">Medikament ${String.fromCharCode(65+i)}</div><div class="item-date">[Datum]</div></div><div class="item-amount">00,00 €</div><span class="more" aria-hidden="true">···</span>`;
-          list.append(row);
-        }
+        const empty=document.createElement('div'); empty.className='empty'; empty.textContent='Keine Ausgaben in diesem Monat.'; list.append(empty);
       } else {
         filtered.forEach(e => {
           const row=document.createElement('div'); row.className='item';
           const date=new Date(`${e.date}T12:00:00`).toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'numeric'});
           row.innerHTML=`<div><div class="item-name"></div><div class="item-date">${date}</div></div><div class="item-amount">${euros(Number(e.amount))}</div><button class="iconbtn more" aria-label="${e.name} löschen">···</button>`;
           row.querySelector('.item-name').textContent=e.name;
-          row.querySelector('button').addEventListener('click',()=>{ if(confirm(`„${e.name}“ löschen?`)){entries=entries.filter(x=>x.id!==e.id);persist();} });
+          row.querySelector('button').setAttribute('aria-label',`Optionen für ${e.name}`);
+          row.querySelector('button').addEventListener('click',()=>openEntryActions(e));
           list.append(row);
         });
       }
     }
     function persist(){ localStorage.setItem(fallback,JSON.stringify(entries)); render(); }
     const backupDialog=document.getElementById('backupDialog');
+    const actionsDialog=document.getElementById('actionsDialog');
+    let selectedEntry=null, editingId=null;
+    function openEntryActions(entry){selectedEntry=entry;document.getElementById('actionsTitle').textContent=entry.name;actionsDialog.showModal();}
+    document.getElementById('actionsClose').addEventListener('click',()=>actionsDialog.close());
+    document.getElementById('editEntry').addEventListener('click',()=>{const entry=selectedEntry;actionsDialog.close();if(entry)openEntryForm(entry);});
+    document.getElementById('deleteEntry').addEventListener('click',()=>{if(selectedEntry&&confirm(`„${selectedEntry.name}“ löschen?`)){entries=entries.filter(e=>e.id!==selectedEntry.id);persist();}actionsDialog.close();selectedEntry=null;});
     document.getElementById('backupOpen').addEventListener('click',()=>backupDialog.showModal());
     document.getElementById('backupClose').addEventListener('click',()=>backupDialog.close());
     document.getElementById('exportData').addEventListener('click',()=>{
@@ -160,14 +170,55 @@
     });
     function toastMessage(message){const toast=document.getElementById('toast');toast.textContent=message;toast.classList.add('show');setTimeout(()=>toast.classList.remove('show'),2600);}
     const dialog=document.getElementById('entryDialog');
-    document.getElementById('add').addEventListener('click',()=>{ document.getElementById('date').value=ymd(shown); dialog.showModal(); document.getElementById('name').focus(); });
-    document.getElementById('close').addEventListener('click',()=>dialog.close());
-    document.getElementById('entryForm').addEventListener('submit',event=>{event.preventDefault(); const name=document.getElementById('name').value.trim(), date=document.getElementById('date').value, amount=Number(document.getElementById('amount').value); entries.push({id:crypto.randomUUID(),name,date,amount}); persist(); shown=new Date(`${date}T12:00:00`); render(); dialog.close(); event.target.reset();});
+    function openEntryForm(entry=null){
+      editingId=entry?.id||null;
+      document.getElementById('entryTitle').textContent=editingId?'Ausgabe bearbeiten':'Ausgabe hinzufügen';
+      document.getElementById('saveEntry').textContent=editingId?'Änderungen speichern':'Speichern';
+      document.getElementById('name').value=entry?.name||'';
+      document.getElementById('amount').value=entry?.amount??'';
+      document.getElementById('date').value=entry?.date||ymd(shown);
+      dialog.showModal();setTimeout(()=>document.getElementById('name').focus(),80);
+    }
+    document.getElementById('add').addEventListener('click',openEntryForm);
+    document.getElementById('close').addEventListener('click',()=>{dialog.close();editingId=null;});
+    document.getElementById('entryForm').addEventListener('submit',event=>{event.preventDefault(); const name=document.getElementById('name').value.trim(), date=document.getElementById('date').value, amount=Number(document.getElementById('amount').value); if(editingId){entries=entries.map(e=>e.id===editingId?{...e,name,date,amount}:e);}else{entries.push({id:crypto.randomUUID(),name,date,amount});} persist(); shown=new Date(`${date}T12:00:00`); render(); dialog.close(); event.target.reset(); editingId=null;});
     document.getElementById('prev').addEventListener('click',()=>{shown.setMonth(shown.getMonth()-1);render();});
     document.getElementById('next').addEventListener('click',()=>{shown.setMonth(shown.getMonth()+1);render();});
     document.getElementById('currentMonth').addEventListener('click',()=>{shown=new Date();shown.setDate(1);render();});
     document.getElementById('monthPicker').addEventListener('click',()=>{const d=prompt('Monat und Jahr eingeben (MM.JJJJ)',`${String(shown.getMonth()+1).padStart(2,'0')}.${shown.getFullYear()}`);if(d&&/^\d{1,2}\.\d{4}$/.test(d)){const [m,y]=d.split('.').map(Number);if(m>=1&&m<=12){shown=new Date(y,m-1,1);render();}}});
-    document.getElementById('voice').addEventListener('click',()=>{const toast=document.getElementById('toast'); toast.textContent='Spracheingabe ist auf diesem Gerät nicht verfügbar';toast.classList.add('show');setTimeout(()=>toast.classList.remove('show'),2600);});
+    function showToast(message){const toast=document.getElementById('toast');toast.textContent=message;toast.classList.add('show');setTimeout(()=>toast.classList.remove('show'),3200);}
+    function parseSpokenEntry(transcript){
+      let remaining=transcript;
+      const amountMatch=remaining.match(/(\d+(?:[.,]\d{1,2})?)\s*(?:euro|eur|€)/i);
+      if(amountMatch){document.getElementById('amount').value=amountMatch[1].replace(',','.');remaining=remaining.replace(amountMatch[0],' ');}
+      let spokenDate=null;
+      const numericDate=remaining.match(/\b(?:am\s+)?(\d{1,2})[./](\d{1,2})(?:[./](\d{2,4}))?\b/i);
+      if(numericDate){let y=Number(numericDate[3]||shown.getFullYear());if(y<100)y+=2000;spokenDate=new Date(y,Number(numericDate[2])-1,Number(numericDate[1]));remaining=remaining.replace(numericDate[0],' ');}
+      if(!spokenDate){
+        const monthIndex={januar:0,februar:1,'märz':2,maerz:2,april:3,mai:4,juni:5,juli:6,august:7,september:8,oktober:9,november:10,dezember:11};
+        const monthDate=remaining.match(/\b(?:am\s+)?(\d{1,2})\.?\s+(Januar|Februar|März|Maerz|April|Mai|Juni|Juli|August|September|Oktober|November|Dezember)(?:\s+(\d{4}))?\b/i);
+        if(monthDate){const month=monthIndex[monthDate[2].toLocaleLowerCase('de-DE')];spokenDate=new Date(Number(monthDate[3]||shown.getFullYear()),month,Number(monthDate[1]));remaining=remaining.replace(monthDate[0],' ');}
+      }
+      if(/\bheute\b/i.test(remaining)){spokenDate=new Date();remaining=remaining.replace(/\bheute\b/ig,' ');}
+      if(spokenDate&&!Number.isNaN(spokenDate.getTime())&&spokenDate.getDate()===Number(numericDate?.[1]||spokenDate.getDate()))document.getElementById('date').value=ymd(spokenDate);
+      const cleaned=remaining.replace(/\b(für|kostet|heute|am)\b/ig,' ').replace(/[,.!?]/g,' ').replace(/\s+/g,' ').trim();
+      if(cleaned)document.getElementById('name').value=cleaned;
+    }
+    function startVoiceEntry(){
+      openEntryForm();
+      const SpeechRecognition=window.SpeechRecognition||window.webkitSpeechRecognition;
+      if(!SpeechRecognition||!window.isSecureContext){
+        showToast('Nutze zum Diktieren das Mikrofon auf der iPhone-Tastatur.');
+        return;
+      }
+      try{
+        const recognition=new SpeechRecognition();recognition.lang='de-DE';recognition.interimResults=false;recognition.maxAlternatives=1;
+        recognition.onresult=event=>{const transcript=event.results[0][0].transcript;parseSpokenEntry(transcript);showToast(`Erkannt: ${transcript}`);};
+        recognition.onerror=event=>{showToast(event.error==='not-allowed'?'Mikrofonzugriff in Safari erlauben oder Tastatur-Diktat verwenden.':'Spracheingabe nicht verfügbar. Nutze das Mikrofon auf der iPhone-Tastatur.');};
+        recognition.start();
+      }catch{showToast('Nutze zum Diktieren das Mikrofon auf der iPhone-Tastatur.');}
+    }
+    document.getElementById('voice').addEventListener('click',startVoiceEntry);
     render();
     if('serviceWorker' in navigator && location.protocol.startsWith('http')) navigator.serviceWorker.register('./service-worker.js').catch(()=>{});
   </script>
